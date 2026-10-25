@@ -1,0 +1,45 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Sorts the accepted viewport keys (bitonic, 256 wide) and writes the view's result block to host-visible
+// memory: total, count, row ids, pivot cells. Dispatch (1, nb).
+
+shared uvec2 sk[256];
+
+void main() {
+    uint slot = gl_WorkGroupID.y;
+    uint t = gl_LocalInvocationID.x;
+    uint sbase = slot * STATE_STRIDE;
+    uint cnt = min(st[sbase + S_OUT], MAX_LIMIT);
+
+    sk[t] = t < cnt ? uvec2(outKeys[(slot * MAX_LIMIT + t) * 2u], outKeys[(slot * MAX_LIMIT + t) * 2u + 1u])
+                    : uvec2(0xFFFFFFFFu);
+    barrier();
+    for (uint k = 2u; k <= 256u; k <<= 1) {
+        for (uint j = k >> 1; j > 0u; j >>= 1) {
+            uint ixj = t ^ j;
+            if (ixj > t) {
+                uvec2 a = sk[t], b = sk[ixj];
+                bool up = (t & k) == 0u;
+                bool gt = a.x > b.x || (a.x == b.x && a.y > b.y);
+                if (gt == up) {
+                    sk[t] = b;
+                    sk[ixj] = a;
+                }
+            }
+            barrier();
+        }
+    }
+
+    uint rb = (pc.viewBase + slot) * RES_STRIDE;
+    if (t == 0u) {
+        res[rb] = st[sbase + S_TOTAL];
+        res[rb + 1u] = cnt;
+    }
+    if (t < cnt) res[rb + RES_ROWS + t] = sk[t].y & ROW_MASK;
+    uint words = vp[pc.viewBase + slot].nGroups * PIVOT_STRIDE;
+    uint pb = slot * MAX_GROUPS * PIVOT_STRIDE;
+    for (uint i = t; i < words; i += WG) res[rb + RES_PIVOT + i] = piv[pb + i];
+}

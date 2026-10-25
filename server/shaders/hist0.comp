@@ -1,0 +1,56 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Pass 0 over the whole table: filter, build the key, histogram its top digit and accumulate the pivot.
+// Dispatch (groupsPerSlot, nb); each workgroup strides over the rows.
+
+shared uint shHist[256];
+shared uint shPiv[MAX_GROUPS * PIVOT_STRIDE];
+
+void add64(uint i, float x) {
+    uint lo, hi;
+    toI64(x, lo, hi);
+    if ((lo | hi) == 0u) return;
+    uint old = atomicAdd(shPiv[i], lo);
+    atomicAdd(shPiv[i + 1u], hi + (old + lo < old ? 1u : 0u));
+}
+
+void main() {
+    uint slot = gl_WorkGroupID.y;
+    uint lid = gl_LocalInvocationID.x;
+    ViewParams P = vp[pc.viewBase + slot];
+    uint pivWords = P.nGroups * PIVOT_STRIDE;
+
+    shHist[lid] = 0u;
+    for (uint i = lid; i < pivWords; i += WG) shPiv[i] = 0u;
+    barrier();
+
+    uint stride = gl_NumWorkGroups.x * WG;
+    for (uint r = gl_WorkGroupID.x * WG + lid; r < pc.n; r += stride) {
+        if (!passFilter(P, r)) continue;
+        atomicAdd(shHist[digitOf(buildKey(P, r), 0u)], 1u);
+        if (P.nGroups != 0u) {
+            uint g = pivotGroup(P, r) * PIVOT_STRIDE;
+            atomicAdd(shPiv[g], 1u);
+            add64(g + 1u, uintBitsToFloat(colv(C_LEAVES, r)));
+            add64(g + 3u, uintBitsToFloat(colv(C_NOTIONAL, r)));
+            add64(g + 5u, uintBitsToFloat(colv(C_PNL, r)));
+        }
+    }
+    barrier();
+
+    if (shHist[lid] != 0u) atomicAdd(hist[slot * HIST_STRIDE + lid], shHist[lid]);
+    uint pbase = slot * MAX_GROUPS * PIVOT_STRIDE;
+    for (uint g = lid; g < P.nGroups; g += WG) {
+        uint i = g * PIVOT_STRIDE;
+        if (shPiv[i] == 0u) continue;
+        atomicAdd(piv[pbase + i], shPiv[i]);
+        for (uint j = 1u; j < PIVOT_STRIDE; j += 2u) {
+            uint lo = shPiv[i + j], hi = shPiv[i + j + 1u];
+            uint old = atomicAdd(piv[pbase + i + j], lo);
+            atomicAdd(piv[pbase + i + j + 1u], hi + (old + lo < old ? 1u : 0u));
+        }
+    }
+}

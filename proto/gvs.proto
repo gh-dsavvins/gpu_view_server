@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+// Wire protocol between gvs_server and the browser client: binary WebSocket frames, one message each.
+package gvs;
+
+enum Op {
+  EQ = 0;
+  NE = 1;
+  LT = 2;
+  LE = 3;
+  GT = 4;
+  GE = 5;
+  IN = 6;  // category columns: bit i of `mask` selects category id i
+}
+
+enum Backend {
+  CPU = 0;
+  GPU = 1;
+}
+
+enum ColumnKind {
+  CATEGORY = 0;
+  UINT = 1;
+  FLOAT = 2;
+}
+
+// ---------------------------------------------------------------- client -> server
+
+message Predicate {
+  uint32 column = 1;
+  Op op = 2;
+  double value = 3;
+  uint32 mask = 4;
+}
+
+message SortKey {
+  uint32 column = 1;
+  bool desc = 2;
+}
+
+message ViewSpec {
+  repeated Predicate filter = 1;  // AND
+  repeated SortKey sort = 2;      // up to 3; ties broken by row
+  uint32 offset = 3;              // first viewport row
+  uint32 limit = 4;               // viewport rows, max 256
+  repeated uint32 pivot_by = 5;   // up to 2 category columns, max 512 cells
+}
+
+// Creates the view, or replaces its spec if view_id already exists.
+message Subscribe {
+  uint32 view_id = 1;
+  ViewSpec spec = 2;
+}
+
+message Unsubscribe {
+  uint32 view_id = 1;
+}
+
+message SetBackend {
+  Backend backend = 1;
+}
+
+message ClientMsg {
+  oneof msg {
+    Subscribe subscribe = 1;
+    Unsubscribe unsubscribe = 2;
+    SetBackend set_backend = 3;
+  }
+}
+
+// ---------------------------------------------------------------- server -> client
+
+message Column {
+  uint32 id = 1;
+  string name = 2;
+  ColumnKind kind = 3;
+  repeated string dict = 4;  // category names by id
+  bool derived = 5;          // recalculated from market data every tick
+}
+
+message Schema {
+  repeated Column columns = 1;
+  uint32 rows = 2;
+  repeated Backend backends = 3;
+  Backend backend = 4;
+  uint32 tick_ms = 5;
+  repeated string gpu_names = 6;
+  uint32 cpu_threads = 7;
+  uint32 load_views = 8;  // synthetic views evaluated every tick on top of client views
+}
+
+message Row {
+  uint32 row = 1;
+  repeated double values = 2;  // indexed by column id
+}
+
+message PivotCell {
+  repeated uint32 key = 1;  // category id per pivot column
+  uint64 count = 2;
+  int64 sum_leaves = 3;
+  int64 sum_notional = 4;
+  int64 sum_pnl = 5;
+}
+
+message ViewUpdate {
+  uint32 view_id = 1;
+  uint64 tick = 2;
+  uint32 total = 3;  // rows passing the filter
+  uint32 offset = 4;
+  repeated Row rows = 5;
+  repeated PivotCell pivot = 6;
+}
+
+message Stats {
+  uint64 tick = 1;
+  Backend backend = 2;
+  double engine_ms = 3;  // whole engine run: upload + derive + all views
+  double derive_ms = 4;
+  double views_ms = 5;
+  uint32 views = 6;  // client + load views
+  uint32 client_views = 7;
+  uint32 rows = 8;
+  uint32 updates = 9;     // changed cells this tick
+  uint32 md_changes = 10; // instruments whose price moved
+  int32 validation = 11;  // -1 off, 0 CPU and GPU results identical, >0 views that differ
+  uint32 tick_ms = 12;
+  double upload_ms = 13;
+}
+
+message Error {
+  string text = 1;
+}
+
+message ServerMsg {
+  oneof msg {
+    Schema schema = 1;
+    ViewUpdate view = 2;
+    Stats stats = 3;
+    Error error = 4;
+  }
+}

@@ -1,0 +1,49 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Pass 0 scatter over the whole table: rows in accepted buckets go to the viewport, rows in edge buckets
+// are appended to candidate half 0. Dispatch (groupsPerSlot, nb).
+
+shared uint shCount, shBase;
+
+void main() {
+    uint slot = gl_WorkGroupID.y;
+    uint lid = gl_LocalInvocationID.x;
+    ViewParams P = vp[pc.viewBase + slot];
+    uint sbase = slot * STATE_STRIDE;
+    uint dst = slot * pc.cap;  // half 0
+    uint stride = gl_NumWorkGroups.x * WG;
+
+    for (uint base = gl_WorkGroupID.x * WG; base < pc.n; base += stride) {
+        uint r = base + lid;
+        uint act = 0u;
+        uvec2 k = uvec2(0u);
+        if (r < pc.n && passFilter(P, r)) {
+            k = buildKey(P, r);
+            act = st[sbase + S_ACTION + digitOf(k, 0u)];
+        }
+        if (act == 1u) {
+            uint o = atomicAdd(st[sbase + S_OUT], 1u);
+            if (o < MAX_LIMIT) {
+                outKeys[(slot * MAX_LIMIT + o) * 2u] = k.x;
+                outKeys[(slot * MAX_LIMIT + o) * 2u + 1u] = k.y;
+            }
+        }
+        // One global atomic per workgroup for the candidate appends.
+        if (lid == 0u) shCount = 0u;
+        barrier();
+        uint idx = act >= 2u ? atomicAdd(shCount, 1u) : 0u;
+        barrier();
+        if (lid == 0u && shCount != 0u) shBase = atomicAdd(st[sbase + S_NEXT], shCount);
+        barrier();
+        if (act >= 2u) {
+            uint ci = (dst + shBase + idx) * 3u;
+            cand[ci] = k.x;
+            cand[ci + 1u] = k.y;
+            cand[ci + 2u] = act - 2u;
+        }
+        barrier();
+    }
+}

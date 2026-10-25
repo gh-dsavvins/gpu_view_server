@@ -1,0 +1,29 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Between passes: the appended candidates become the current set, histograms are cleared and the
+// indirect dispatch size for the next pass is set from the largest candidate count. Dispatch (1, 1).
+
+shared uint shMax;
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    if (t == 0u) shMax = 0u;
+    barrier();
+    for (uint s = t; s < pc.nb; s += WG) {
+        uint b = s * STATE_STRIDE;
+        uint c = st[b + S_NEXT];
+        st[b + S_CAND] = c;
+        st[b + S_NEXT] = 0u;
+        atomicMax(shMax, c);
+    }
+    for (uint i = t; i < pc.nb * HIST_STRIDE; i += WG) hist[i] = 0u;
+    barrier();
+    if (t == 0u) {
+        disp[0] = min((shMax + WG - 1u) / WG, 1024u);
+        disp[1] = pc.nb;
+        disp[2] = 1u;
+    }
+}

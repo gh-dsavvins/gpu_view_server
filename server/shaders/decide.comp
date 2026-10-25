@@ -1,0 +1,86 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Radix-select decision for one slot, one thread per digit. Dispatch (1, nb).
+// Each open rank window [a, b) is matched against the digit histogram: buckets fully inside the window
+// are accepted, buckets crossing an edge become the next pass's windows (at most 2 in total).
+
+shared uint sh[256];
+shared uint sA[2], sB[2], sNG, sNew, sNewA[2], sNewB[2];
+
+void main() {
+    uint slot = gl_WorkGroupID.y;
+    uint t = gl_LocalInvocationID.x;
+    uint sbase = slot * STATE_STRIDE;
+    uint hbase = slot * HIST_STRIDE;
+
+    if (pc.pass == 0u) {
+        // Total filtered rows = sum of the pass-0 histogram.
+        sh[t] = hist[hbase + t];
+        barrier();
+        for (uint off = 128u; off > 0u; off >>= 1) {
+            if (t < off) sh[t] += sh[t + off];
+            barrier();
+        }
+        if (t == 0u) {
+            ViewParams P = vp[pc.viewBase + slot];
+            uint total = sh[0];
+            st[sbase + S_TOTAL] = total;
+            sA[0] = min(P.vOffset, total);
+            sB[0] = min(P.vOffset + P.vLimit, total);
+            sA[1] = 0u;
+            sB[1] = 0u;
+            sNG = 1u;
+        }
+    } else if (t == 0u) {
+        sNG = st[sbase + S_NGROUPS];
+        sA[0] = st[sbase + S_A];
+        sA[1] = st[sbase + S_A + 1u];
+        sB[0] = st[sbase + S_B];
+        sB[1] = st[sbase + S_B + 1u];
+    }
+    if (t == 0u) sNew = 0u;
+    barrier();
+    uint ng = sNG;
+
+    for (uint g = 0u; g < 2u; ++g) {
+        uint h = g < ng ? hist[hbase + g * 256u + t] : 0u;
+        barrier();
+        sh[t] = h;
+        barrier();
+        for (uint off = 1u; off < 256u; off <<= 1) {
+            uint v = t >= off ? sh[t - off] : 0u;
+            barrier();
+            sh[t] += v;
+            barrier();
+        }
+        uint end = sh[t];
+        uint start = end - h;
+        uint a = sA[g], b = sB[g];
+        uint act = 0u;
+        if (h != 0u && end > a && start < b) {
+            if (start >= a && end <= b) {
+                act = 1u;
+            } else {
+                uint id = atomicAdd(sNew, 1u);
+                if (id < 2u) {
+                    sNewA[id] = max(a, start) - start;
+                    sNewB[id] = min(b, end) - start;
+                    act = 2u + id;
+                }
+            }
+        }
+        st[sbase + S_ACTION + g * 256u + t] = act;
+    }
+    barrier();
+    if (t == 0u) {
+        uint nn = min(sNew, 2u);
+        st[sbase + S_NGROUPS] = nn;
+        st[sbase + S_A] = sNewA[0];
+        st[sbase + S_A + 1u] = sNewA[1];
+        st[sbase + S_B] = sNewB[0];
+        st[sbase + S_B + 1u] = sNewB[1];
+    }
+}

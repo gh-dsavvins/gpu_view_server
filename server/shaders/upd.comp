@@ -1,0 +1,11 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Applies the tick's changed base-column cells.
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) return;
+    col[upd[3u * i + 1u] * pc.n + upd[3u * i]] = upd[3u * i + 2u];
+}

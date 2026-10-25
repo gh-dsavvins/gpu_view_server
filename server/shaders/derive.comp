@@ -1,0 +1,32 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Recalculates the market-data-derived columns. Must match deriveRow() in store.h bit for bit:
+// `precise` forbids fused multiply-add, the CPU side is built with -ffp-contract=off.
+void main() {
+    uint stride = gl_NumWorkGroups.x * WG;
+    for (uint r = gl_GlobalInvocationID.x; r < pc.n; r += stride) {
+        uint i = colv(C_INSTRUMENT, r);
+        float mid = inst[i];
+        float invBps = inst[pc.m + i];
+        float qty = uintBitsToFloat(colv(C_QTY, r));
+        float filled = uintBitsToFloat(colv(C_FILLED, r));
+        float limitPx = uintBitsToFloat(colv(C_LIMIT_PX, r));
+        float avgPx = uintBitsToFloat(colv(C_AVG_PX, r));
+        uint status = colv(C_STATUS, r);
+        float s = colv(C_SIDE, r) == SIDE_BUY ? 1.0 : -1.0;
+
+        precise float leaves = (status == ST_FILLED || status == ST_CANCELLED) ? 0.0 : qty - filled;
+        precise float notional = leaves * mid;
+        precise float dist = ((mid - limitPx) * s) * invBps;
+        precise float pnl = (filled * (mid - avgPx)) * s;
+
+        col[C_MID * pc.n + r] = floatBitsToUint(mid);
+        col[C_LEAVES * pc.n + r] = floatBitsToUint(leaves);
+        col[C_NOTIONAL * pc.n + r] = floatBitsToUint(notional);
+        col[C_DIST_BPS * pc.n + r] = floatBitsToUint(dist);
+        col[C_PNL * pc.n + r] = floatBitsToUint(pnl);
+    }
+}

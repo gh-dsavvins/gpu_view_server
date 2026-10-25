@@ -1,0 +1,14 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Resets one slot's selection state, histogram and pivot accumulators. Dispatch (1, nb).
+void main() {
+    uint slot = gl_WorkGroupID.y;
+    uint t = gl_LocalInvocationID.x;
+    for (uint i = t; i < STATE_STRIDE; i += WG) st[slot * STATE_STRIDE + i] = 0u;
+    for (uint i = t; i < HIST_STRIDE; i += WG) hist[slot * HIST_STRIDE + i] = 0u;
+    uint words = vp[pc.viewBase + slot].nGroups * PIVOT_STRIDE;
+    for (uint i = t; i < words; i += WG) piv[slot * MAX_GROUPS * PIVOT_STRIDE + i] = 0u;
+}

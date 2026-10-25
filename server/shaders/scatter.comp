@@ -1,0 +1,50 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 256) in;
+
+// Passes 1..7: route each candidate by its window group and digit: accept into the viewport, keep for
+// the next pass (other buffer half), or drop. Dispatched indirectly with (x, nb, 1).
+
+shared uint shCount, shBase;
+
+void main() {
+    uint slot = gl_WorkGroupID.y;
+    uint lid = gl_LocalInvocationID.x;
+    uint sbase = slot * STATE_STRIDE;
+    uint count = st[sbase + S_CAND];
+    uint src = (pc.srcHalf * pc.slotCap + slot) * pc.cap;
+    uint dst = ((1u - pc.srcHalf) * pc.slotCap + slot) * pc.cap;
+    uint stride = gl_NumWorkGroups.x * WG;
+
+    for (uint base = gl_WorkGroupID.x * WG; base < count; base += stride) {
+        uint i = base + lid;
+        uint act = 0u;
+        uvec2 k = uvec2(0u);
+        if (i < count) {
+            uint ci = (src + i) * 3u;
+            k = uvec2(cand[ci], cand[ci + 1u]);
+            act = st[sbase + S_ACTION + cand[ci + 2u] * 256u + digitOf(k, pc.pass)];
+        }
+        if (act == 1u) {
+            uint o = atomicAdd(st[sbase + S_OUT], 1u);
+            if (o < MAX_LIMIT) {
+                outKeys[(slot * MAX_LIMIT + o) * 2u] = k.x;
+                outKeys[(slot * MAX_LIMIT + o) * 2u + 1u] = k.y;
+            }
+        }
+        if (lid == 0u) shCount = 0u;
+        barrier();
+        uint idx = act >= 2u ? atomicAdd(shCount, 1u) : 0u;
+        barrier();
+        if (lid == 0u && shCount != 0u) shBase = atomicAdd(st[sbase + S_NEXT], shCount);
+        barrier();
+        if (act >= 2u) {
+            uint ci = (dst + shBase + idx) * 3u;
+            cand[ci] = k.x;
+            cand[ci + 1u] = k.y;
+            cand[ci + 2u] = act - 2u;
+        }
+        barrier();
+    }
+}
