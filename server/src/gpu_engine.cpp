@@ -511,9 +511,10 @@ private:
             pc.viewBase = base;
             pc.pass = 0;
             dispatch(d, K_CLEAR, pc, 1, pc.nb);
-            dispatch(d, K_HIST0, pc, cfg_.groupsPerSlot, pc.nb);
+            // x = slot, y = row group, so the batch's views walk the same rows together.
+            dispatch(d, K_HIST0, pc, pc.nb, cfg_.groupsPerSlot);
             dispatch(d, K_DECIDE, pc, 1, pc.nb);
-            dispatch(d, K_SCATTER0, pc, cfg_.groupsPerSlot, pc.nb);
+            dispatch(d, K_SCATTER0, pc, pc.nb, cfg_.groupsPerSlot);
             for (uint32_t p = 1; p < PASSES; ++p) {
                 pc.pass = p;
                 pc.srcHalf = (p - 1) & 1;

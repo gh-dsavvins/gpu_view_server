@@ -44,7 +44,15 @@ struct GpuConfig {
     uint32_t groupsPerSlot = 64;  // workgroups per view for the full-table passes
 };
 
-std::unique_ptr<Engine> makeCpuEngine(unsigned threads);
+struct CpuConfig {
+    unsigned threads = 0;   // 0 = one per CPU in `cpus`, or per hardware thread
+    std::vector<int> cpus;  // pin threads to these CPUs (Linux); empty = no pinning
+    bool simple = false;    // the straightforward engine instead of the tuned one
+};
+
+// "cpu" = tuned engine (cache-blocked view batches, histogram select);
+// "cpu-simple" = one view per thread, full scan + nth_element. Benchmarks run both and take the best.
+std::unique_ptr<Engine> makeCpuEngine(const CpuConfig& cfg);
 std::unique_ptr<Engine> makeGpuEngine(const GpuConfig& cfg, std::string& err);
 
 // Number of views whose results differ; describes the first difference in `first`.

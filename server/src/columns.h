@@ -49,8 +49,8 @@ inline constexpr ColInfo COLS[NUM_COLS] = {
 enum Side : uint32_t { SIDE_BUY = 0, SIDE_SELL = 1 };
 enum Status : uint32_t { ST_NEW = 0, ST_PARTIAL = 1, ST_FILLED = 2, ST_CANCELLED = 3 };
 
-// A sort key is 64 bits: up to 40 bits of packed sort columns, then the row index as a tie-break.
-constexpr uint32_t ROW_BITS = 24;
+// A sort key is 64 bits: up to 39 bits of packed sort columns, then the row index as a tie-break.
+constexpr uint32_t ROW_BITS = 25;  // up to 33.5M rows
 constexpr uint32_t MAX_ROWS = 1u << ROW_BITS;
 constexpr uint32_t KEY_BITS = 64 - ROW_BITS;
 

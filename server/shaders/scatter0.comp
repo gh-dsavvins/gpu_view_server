@@ -4,19 +4,19 @@
 layout(local_size_x = 256) in;
 
 // Pass 0 scatter over the whole table: rows in accepted buckets go to the viewport, rows in edge buckets
-// are appended to candidate half 0. Dispatch (groupsPerSlot, nb).
+// are appended to candidate half 0. Dispatch (nb, groupsPerSlot).
 
 shared uint shCount, shBase;
 
 void main() {
-    uint slot = gl_WorkGroupID.y;
+    uint slot = gl_WorkGroupID.x;  // x = slot, y = row group: consecutive workgroups share rows (L2 reuse)
     uint lid = gl_LocalInvocationID.x;
     ViewParams P = vp[pc.viewBase + slot];
     uint sbase = slot * STATE_STRIDE;
     uint dst = slot * pc.cap;  // half 0
-    uint stride = gl_NumWorkGroups.x * WG;
+    uint stride = gl_NumWorkGroups.y * WG;
 
-    for (uint base = gl_WorkGroupID.x * WG; base < pc.n; base += stride) {
+    for (uint base = gl_WorkGroupID.y * WG; base < pc.n; base += stride) {
         uint r = base + lid;
         uint act = 0u;
         uvec2 k = uvec2(0u);

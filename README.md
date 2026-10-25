@@ -22,11 +22,14 @@ cmake --build build -j
 ## Benchmark
 
 ```sh
-./build/server/gvs_bench --rows 4000000 --views 8,32,128 --ticks 10 --json bench.json
+./build/server/gvs_bench --rows 25000000 --views 128,512,1024 --ticks 10 --pin all --json bench.json
 ```
 
-Runs the same simulated ticks and views through both engines, prints engine time per tick and checks that
-the CPU and GPU results are identical (totals, viewport rows, pivot sums).
+Runs the same simulated ticks and views through three engines (`cpu-simple`, the tuned `cpu`, `gpu`), checks
+that all results are identical (totals, viewport rows, pivot sums) and prints engine time per tick. The
+speedup is against the faster of the two CPU engines. `--pin all` pins one thread per CPU, which is also
+how isolated CPUs (`isolcpus`) get used. The JSON records date, commit, host, CPU model, CPU threads and
+GPUs. Re-run `cmake -S . -B build` after `git pull` so the recorded commit is current.
 
 ## Run the server
 
@@ -59,7 +62,7 @@ only on the few candidates left in the edge buckets.
 
 1. The whole table stays in GPU memory. Each tick uploads only changed cells and instrument prices.
 2. Derived columns (mid, leaves, notional, distance to market in bps, P&L) are recalculated once for all rows.
-3. Every view's sort columns are packed into a 64-bit key (40 bits of sort columns, 24 bits row index).
+3. Every view's sort columns are packed into a 64-bit key (39 bits of sort columns, 25 bits row index, so up to 33.5M rows).
 4. Radix select, 8 passes of 8 bits: each pass histograms the surviving candidates, accepts buckets that fall
    inside the viewport's rank window and keeps only the edge buckets. Up to 8 views run together per batch.
 5. The selected keys (at most 256) are sorted in one workgroup. Row ids, totals and pivot cells go to host memory.

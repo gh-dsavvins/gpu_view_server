@@ -27,7 +27,7 @@
 #define OP_IN 6u
 
 #define WG 256u
-#define ROW_MASK 0xFFFFFFu
+#define ROW_MASK 0x1FFFFFFu  // ROW_BITS = 25
 #define MAX_LIMIT 256u
 #define MAX_GROUPS 512u
 #define PIVOT_STRIDE 7u
@@ -115,7 +115,7 @@ uvec2 buildKey(in ViewParams P, uint r) {
         uint bits = P.keyBits[k];
         uint part = norm >> (32u - bits);
         if (P.keyDesc[k] != 0u) part ^= bits == 32u ? 0xFFFFFFFFu : ((1u << bits) - 1u);
-        uint s = P.keyShift[k];  // always >= 24
+        uint s = P.keyShift[k];  // always >= ROW_BITS (25)
         if (s >= 32u) {
             hi |= part << (s - 32u);
         } else {

@@ -4,7 +4,7 @@
 layout(local_size_x = 256) in;
 
 // Pass 0 over the whole table: filter, build the key, histogram its top digit and accumulate the pivot.
-// Dispatch (groupsPerSlot, nb); each workgroup strides over the rows.
+// Dispatch (nb, groupsPerSlot); each workgroup strides over the rows.
 
 shared uint shHist[256];
 shared uint shPiv[MAX_GROUPS * PIVOT_STRIDE];
@@ -18,7 +18,7 @@ void add64(uint i, float x) {
 }
 
 void main() {
-    uint slot = gl_WorkGroupID.y;
+    uint slot = gl_WorkGroupID.x;  // x = slot, y = row group: consecutive workgroups share rows (L2 reuse)
     uint lid = gl_LocalInvocationID.x;
     ViewParams P = vp[pc.viewBase + slot];
     uint pivWords = P.nGroups * PIVOT_STRIDE;
@@ -27,8 +27,8 @@ void main() {
     for (uint i = lid; i < pivWords; i += WG) shPiv[i] = 0u;
     barrier();
 
-    uint stride = gl_NumWorkGroups.x * WG;
-    for (uint r = gl_WorkGroupID.x * WG + lid; r < pc.n; r += stride) {
+    uint stride = gl_NumWorkGroups.y * WG;
+    for (uint r = gl_WorkGroupID.y * WG + lid; r < pc.n; r += stride) {
         if (!passFilter(P, r)) continue;
         atomicAdd(shHist[digitOf(buildKey(P, r), 0u)], 1u);
         if (P.nGroups != 0u) {

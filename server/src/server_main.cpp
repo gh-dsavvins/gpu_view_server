@@ -4,6 +4,7 @@
 #include "net.h"
 #include "protocol.h"
 #include "sim.h"
+#include "thread_pool.h"
 
 #include <chrono>
 #include <csignal>
@@ -25,7 +26,7 @@ struct Args {
     uint32_t tickMs = 300;
     std::string backend = "gpu";
     uint32_t loadViews = 0;
-    unsigned threads = 0;
+    CpuConfig cpu;
     std::string www;
     bool validate = false;
     GpuConfig gpu;
@@ -35,7 +36,7 @@ void usage() {
     std::puts(
         "gvs_server [options]\n"
         "  --port N            WebSocket/HTTP port (8080)\n"
-        "  --rows N            orders in the table (4000000, max 16777216)\n"
+        "  --rows N            orders in the table (4000000, max 33554432)\n"
         "  --instruments N     instruments (5000)\n"
         "  --tick-ms N         update/push interval (300)\n"
         "  --fills N           fill attempts per tick (20000)\n"
@@ -43,7 +44,9 @@ void usage() {
         "  --md-share X        share of instruments moving per tick (0.3)\n"
         "  --backend cpu|gpu   starting backend (gpu, falls back to cpu)\n"
         "  --load-views N      synthetic views evaluated every tick on top of client views (0)\n"
-        "  --threads N         CPU engine threads (all cores)\n"
+        "  --threads N         CPU engine threads (one per pinned CPU, or all hardware threads)\n"
+        "  --pin LIST          pin CPU threads to these CPUs, e.g. 0-23 or all (Linux)\n"
+        "  --cpu-engine NAME   cpu (tuned, default) or cpu-simple\n"
         "  --gpus N            max GPUs to use (all)\n"
         "  --slots N           GPU views per batch (8)\n"
         "  --validate          also run the other backend every tick and compare results\n"
@@ -64,7 +67,14 @@ bool parseArgs(int argc, char** argv, Args& a) {
         else if (k == "--md-share") a.sim.mdMoveShare = float(std::atof(val()));
         else if (k == "--backend") a.backend = val();
         else if (k == "--load-views") a.loadViews = uint32_t(std::atoi(val()));
-        else if (k == "--threads") a.threads = unsigned(std::atoi(val()));
+        else if (k == "--threads") a.cpu.threads = unsigned(std::atoi(val()));
+        else if (k == "--pin") {
+            a.cpu.cpus = parseCpuList(val());
+            if (a.cpu.cpus.empty()) {
+                std::puts("bad --pin list");
+                return false;
+            }
+        } else if (k == "--cpu-engine") a.cpu.simple = std::string(val()) == "cpu-simple";
         else if (k == "--gpus") a.gpu.maxDevices = uint32_t(std::atoi(val()));
         else if (k == "--slots") a.gpu.slots = uint32_t(std::atoi(val()));
         else if (k == "--validate") a.validate = true;
@@ -81,7 +91,7 @@ bool parseArgs(int argc, char** argv, Args& a) {
 class App final : public WsServer::Handler {
 public:
     App(const Args& a) : a_(a), sim_(store_, a.sim), rng_(a.sim.seed + 1) {
-        cpu_ = makeCpuEngine(a.threads);
+        cpu_ = makeCpuEngine(a.cpu);
         std::string err;
         gpu_ = makeGpuEngine(a.gpu, err);
         if (!gpu_) std::printf("GPU backend unavailable: %s\n", err.c_str());

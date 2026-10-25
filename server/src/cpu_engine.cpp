@@ -14,6 +14,93 @@ using Clock = std::chrono::steady_clock;
 
 double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
 
+using DerivedCols = std::vector<uint32_t>[NUM_COLS - NUM_BASE_COLS];
+
+std::string describe(const ThreadPool& pool, const CpuConfig& cfg) {
+    std::string s = std::to_string(pool.size()) + " threads";
+    if (!cfg.cpus.empty()) s += pool.pinned() ? ", pinned" : ", pinning unavailable";
+    return s;
+}
+
+// Recalculates the market-data-derived columns for all rows and points col[] at base + derived columns.
+void deriveAll(ThreadPool& pool, const Store& s, DerivedCols& derived, const uint32_t** col) {
+    constexpr uint32_t CHUNK = 1 << 16;
+    const uint32_t n = s.rows;
+    for (auto& d : derived) d.resize(n);
+    pool.parallelFor((n + CHUNK - 1) / CHUNK, [&](size_t chunk, unsigned) {
+        const uint32_t begin = uint32_t(chunk) * CHUNK;
+        const uint32_t end = std::min<uint32_t>(n, begin + CHUNK);
+        for (uint32_t r = begin; r < end; ++r) {
+            const Derived d = deriveRow(s, r);
+            derived[C_MID - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.mid);
+            derived[C_LEAVES - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.leaves);
+            derived[C_NOTIONAL - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.notional);
+            derived[C_DIST_BPS - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.distBps);
+            derived[C_PNL - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.pnl);
+        }
+    });
+    for (uint32_t c = 0; c < NUM_BASE_COLS; ++c) col[c] = s.cols[c].data();
+    for (uint32_t c = NUM_BASE_COLS; c < NUM_COLS; ++c) col[c] = derived[c - NUM_BASE_COLS].data();
+}
+
+// Straightforward baseline: every view is one task on a pool of all cores. A task scans the table once
+// (filter + key + pivot), then std::nth_element / partial_sort pick the viewport. Memory-bound and simple;
+// on some CPUs it beats the tuned engine, so the benchmark runs both.
+class SimpleCpuEngine final : public Engine {
+public:
+    explicit SimpleCpuEngine(const CpuConfig& cfg) : cfg_(cfg), pool_(cfg.threads, cfg.cpus), scratch_(pool_.size()) {}
+
+    std::string name() const override { return "cpu-simple"; }
+    std::vector<std::string> devices() const override { return {describe(pool_, cfg_)}; }
+
+    void run(const Store& s, uint64_t, const std::vector<Update>&, const std::vector<ViewParams>& views,
+             std::vector<ViewResult>& out, RunStats& stats) override {
+        const auto t0 = Clock::now();
+        const uint32_t* col[NUM_COLS];
+        deriveAll(pool_, s, derived_, col);
+        stats.deriveMs = msSince(t0);
+        const auto t1 = Clock::now();
+        out.resize(views.size());
+        pool_.parallelFor(views.size(),
+                          [&](size_t i, unsigned tid) { runView(views[i], col, s.rows, scratch_[tid], out[i]); });
+        stats.viewsMs = msSince(t1);
+        stats.uploadMs = 0;
+        stats.totalMs = msSince(t0);
+    }
+
+private:
+    static void runView(const ViewParams& p, const uint32_t* const* col, uint32_t n, std::vector<uint64_t>& keys,
+                        ViewResult& res) {
+        keys.clear();
+        res.pivot.assign(p.nGroups, PivotCell{});
+        for (uint32_t r = 0; r < n; ++r) {
+            if (!passFilter(p, col, r)) continue;
+            keys.push_back(buildKey(p, col, r));
+            if (p.nGroups) {
+                PivotCell& c = res.pivot[pivotGroup(p, col, r)];
+                ++c.count;
+                c.leaves += int64_t(std::bit_cast<float>(col[C_LEAVES][r]));
+                c.notional += int64_t(std::bit_cast<float>(col[C_NOTIONAL][r]));
+                c.pnl += int64_t(std::bit_cast<float>(col[C_PNL][r]));
+            }
+        }
+        res.total = uint32_t(keys.size());
+        const size_t a = std::min<size_t>(p.offset, keys.size());
+        const size_t b = std::min<size_t>(size_t(p.offset) + p.limit, keys.size());
+        res.rows.clear();
+        if (a < b) {
+            std::nth_element(keys.begin(), keys.begin() + a, keys.end());
+            std::partial_sort(keys.begin() + a, keys.begin() + b, keys.end());
+            for (size_t i = a; i < b; ++i) res.rows.push_back(uint32_t(keys[i] & (MAX_ROWS - 1)));
+        }
+    }
+
+    CpuConfig cfg_;
+    ThreadPool pool_;
+    std::vector<std::vector<uint64_t>> scratch_;
+    DerivedCols derived_;
+};
+
 // Tuned CPU baseline, so the GPU is compared against the best we can do on a CPU:
 //  - Views are processed in blocks of BLOCK that share one pass over the table: a chunk of rows is pulled
 //    from DRAM once and evaluated for every view in the block while it sits in cache.
@@ -26,34 +113,18 @@ double msSince(Clock::time_point t) { return std::chrono::duration<double, std::
 //    result is exact even when the data moves.
 class CpuEngine final : public Engine {
 public:
-    explicit CpuEngine(unsigned threads) : pool_(threads), scratch_(pool_.size()) {}
+    explicit CpuEngine(const CpuConfig& cfg) : cfg_(cfg), pool_(cfg.threads, cfg.cpus), scratch_(pool_.size()) {}
 
     std::string name() const override { return "cpu"; }
-    std::vector<std::string> devices() const override { return {std::to_string(pool_.size()) + " threads"}; }
+    std::vector<std::string> devices() const override { return {describe(pool_, cfg_)}; }
 
     void run(const Store& s, uint64_t, const std::vector<Update>&, const std::vector<ViewParams>& views,
              std::vector<ViewResult>& out, RunStats& stats) override {
         const auto t0 = Clock::now();
         const uint32_t n = s.rows;
-        for (auto& d : derived_) d.resize(n);
-
-        pool_.parallelFor((n + CHUNK * 16 - 1) / (CHUNK * 16), [&](size_t chunk, unsigned) {
-            const uint32_t begin = uint32_t(chunk) * CHUNK * 16;
-            const uint32_t end = std::min<uint32_t>(n, begin + CHUNK * 16);
-            for (uint32_t r = begin; r < end; ++r) {
-                const Derived d = deriveRow(s, r);
-                derived_[C_MID - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.mid);
-                derived_[C_LEAVES - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.leaves);
-                derived_[C_NOTIONAL - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.notional);
-                derived_[C_DIST_BPS - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.distBps);
-                derived_[C_PNL - NUM_BASE_COLS][r] = std::bit_cast<uint32_t>(d.pnl);
-            }
-        });
-        stats.deriveMs = msSince(t0);
-
         const uint32_t* col[NUM_COLS];
-        for (uint32_t c = 0; c < NUM_BASE_COLS; ++c) col[c] = s.cols[c].data();
-        for (uint32_t c = NUM_BASE_COLS; c < NUM_COLS; ++c) col[c] = derived_[c - NUM_BASE_COLS].data();
+        deriveAll(pool_, s, derived_, col);
+        stats.deriveMs = msSince(t0);
 
         const auto t1 = Clock::now();
         const uint32_t nv = uint32_t(views.size());
@@ -279,16 +350,20 @@ private:
         }
     }
 
+    CpuConfig cfg_;
     ThreadPool pool_;
     std::vector<Scratch> scratch_;
     std::vector<Learned> learned_;
     std::vector<Acc> acc_;
     std::vector<ViewWork> work_;
-    std::vector<uint32_t> derived_[NUM_COLS - NUM_BASE_COLS];
+    DerivedCols derived_;
 };
 
 }  // namespace
 
-std::unique_ptr<Engine> makeCpuEngine(unsigned threads) { return std::make_unique<CpuEngine>(threads); }
+std::unique_ptr<Engine> makeCpuEngine(const CpuConfig& cfg) {
+    if (cfg.simple) return std::make_unique<SimpleCpuEngine>(cfg);
+    return std::make_unique<CpuEngine>(cfg);
+}
 
 }  // namespace gvs

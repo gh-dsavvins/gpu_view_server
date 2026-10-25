@@ -17,6 +17,14 @@ target_include_directories(gvs_core PUBLIC src)
 target_compile_options(gvs_core PUBLIC -ffp-contract=off -Wall -Wextra)
 target_link_libraries(gvs_core PUBLIC Threads::Threads)
 
+# Commit id recorded in benchmark output, "-dirty" if the tree had local changes.
+execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                OUTPUT_VARIABLE GVS_GIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT GVS_GIT)
+    set(GVS_GIT unknown)
+endif()
+target_compile_definitions(gvs_core PUBLIC GVS_GIT="${GVS_GIT}")
+
 if(GVS_GPU)
     find_package(Vulkan REQUIRED)
     find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED)

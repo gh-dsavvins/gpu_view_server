@@ -4,17 +4,72 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
+#ifdef __linux__
+#include <pthread.h>
+#include <sched.h>
+#endif
+
 namespace gvs {
+
+// Pins the calling thread to one CPU. Works on isolated CPUs (isolcpus) too. Linux only.
+inline bool pinCurrentThread(int cpu) {
+#ifdef __linux__
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    return pthread_setaffinity_np(pthread_self(), sizeof set, &set) == 0;
+#else
+    (void)cpu;
+    return false;
+#endif
+}
+
+// "0-11,24-35" -> {0..11, 24..35}; "all" -> every configured CPU. Empty on a parse error.
+inline std::vector<int> parseCpuList(const std::string& s) {
+    std::vector<int> out;
+    if (s == "all") {
+        for (unsigned i = 0; i < std::thread::hardware_concurrency(); ++i) out.push_back(int(i));
+        return out;
+    }
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t j = s.find(',', i);
+        if (j == std::string::npos) j = s.size();
+        const std::string part = s.substr(i, j - i);
+        const size_t dash = part.find('-');
+        try {
+            const int a = std::stoi(part.substr(0, dash));
+            const int b = dash == std::string::npos ? a : std::stoi(part.substr(dash + 1));
+            for (int c = a; c <= b; ++c) out.push_back(c);
+        } catch (...) {
+            return {};
+        }
+        i = j + 1;
+    }
+    return out;
+}
 
 class ThreadPool {
 public:
-    explicit ThreadPool(unsigned threads)
-        : n_(threads ? threads : std::max(1u, std::thread::hardware_concurrency())) {
-        for (unsigned i = 1; i < n_; ++i) workers_.emplace_back([this, i] { loop(i); });
+    // threads = 0: one per CPU in `cpus`, or per hardware thread if `cpus` is empty.
+    // With `cpus`, thread i (the caller is thread 0) is pinned to cpus[i % cpus.size()].
+    explicit ThreadPool(unsigned threads, std::vector<int> cpus = {})
+        : n_(threads ? threads
+                     : cpus.empty() ? std::max(1u, std::thread::hardware_concurrency()) : unsigned(cpus.size())),
+          cpus_(std::move(cpus)) {
+        if (!cpus_.empty()) pinned_ = pinCurrentThread(cpus_[0]);
+        for (unsigned i = 1; i < n_; ++i)
+            workers_.emplace_back([this, i] {
+                if (!cpus_.empty()) pinCurrentThread(cpus_[i % cpus_.size()]);
+                loop(i);
+            });
     }
+
+    bool pinned() const { return pinned_; }
 
     ~ThreadPool() {
         {
@@ -67,6 +122,8 @@ private:
     }
 
     unsigned n_;
+    std::vector<int> cpus_;
+    bool pinned_ = false;
     std::vector<std::thread> workers_;
     std::mutex m_;
     std::condition_variable cv_, done_;
