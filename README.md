@@ -48,6 +48,13 @@ npm run dev
 Open http://localhost:5173 and connect to `ws://<macpro>:8080/ws`.
 Or build it (`npm run build`) and start the server with `--www client/dist`, then open `http://<macpro>:8080/`.
 
+## How the CPU engine works
+
+Tuned so the comparison is against the best CPU approach, not a naive one: blocks of 8 views share one
+cache-blocked pass over the table, rows are split across all cores whatever the view count, and selection
+is a two-pass 11-bit histogram select (skipping key bits that were constant last tick) with `nth_element`
+only on the few candidates left in the edge buckets.
+
 ## How the GPU engine works
 
 1. The whole table stays in GPU memory. Each tick uploads only changed cells and instrument prices.
