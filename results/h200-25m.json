@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-25T13:57:26Z",
+  "build": "e8d1358",
+  "host": "fd3d91bf7b25",
+  "cpu_model": "INTEL(R) XEON(R) PLATINUM 8580",
+  "logical_cpus": 240,
+  "cpu": "240 threads, pinning unavailable",
+  "pin": "all",
+  "gpus": ["NVIDIA H200"],
+  "gpu_slots": 8,
+  "gpu_groups": 2048,
+  "rows": 25000000,
+  "instruments": 5000,
+  "ticks": 5,
+  "validated": true,
+  "results": [
+    {"views": 128, "cpu_engine": "cpu-simple", "cpu_p50": 1810.35, "cpu_p95": 2076.94, "gpu_p50": 302.86, "gpu_p95": 307.763, "cpu-simple": {"p50": 1810.35, "p95": 2076.94}, "cpu": {"p50": 1930.64, "p95": 2020.02}, "gpu": {"p50": 302.86, "p95": 307.763}, "mismatches": 0},
+    {"views": 512, "cpu_engine": "cpu-simple", "cpu_p50": 5696.07, "cpu_p95": 6047.38, "gpu_p50": 516.395, "gpu_p95": 574.462, "cpu-simple": {"p50": 5696.07, "p95": 6047.38}, "cpu": {"p50": 6931.07, "p95": 6991.05}, "gpu": {"p50": 516.395, "p95": 574.462}, "mismatches": 0},
+    {"views": 1024, "cpu_engine": "cpu-simple", "cpu_p50": 10752, "cpu_p95": 10899.6, "gpu_p50": 878.772, "gpu_p95": 914.567, "cpu-simple": {"p50": 10752, "p95": 10899.6}, "cpu": {"p50": 13798.5, "p95": 14092.1}, "gpu": {"p50": 878.772, "p95": 914.567}, "mismatches": 0}
+  ]
+}

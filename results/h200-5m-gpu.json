@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-25T14:10:37Z",
+  "build": "e8d1358",
+  "host": "fd3d91bf7b25",
+  "cpu_model": "INTEL(R) XEON(R) PLATINUM 8580",
+  "logical_cpus": 240,
+  "cpu": "",
+  "pin": "",
+  "gpus": ["NVIDIA H200"],
+  "gpu_slots": 8,
+  "gpu_groups": 2048,
+  "rows": 5000000,
+  "instruments": 5000,
+  "ticks": 10,
+  "validated": false,
+  "results": [
+    {"views": 256, "gpu_p50": 41.5462, "gpu_p95": 41.6115, "gpu": {"p50": 41.5462, "p95": 41.6115}, "mismatches": 0},
+    {"views": 512, "gpu_p50": 82.4685, "gpu_p95": 82.5763, "gpu": {"p50": 82.4685, "p95": 82.5763}, "mismatches": 0},
+    {"views": 1024, "gpu_p50": 166.459, "gpu_p95": 166.546, "gpu": {"p50": 166.459, "p95": 166.546}, "mismatches": 0}
+  ]
+}

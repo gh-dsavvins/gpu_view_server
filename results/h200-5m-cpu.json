@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-25T14:11:33Z",
+  "build": "e8d1358",
+  "host": "fd3d91bf7b25",
+  "cpu_model": "INTEL(R) XEON(R) PLATINUM 8580",
+  "logical_cpus": 240,
+  "cpu": "240 threads",
+  "pin": "",
+  "gpus": [],
+  "gpu_slots": 8,
+  "gpu_groups": 64,
+  "rows": 5000000,
+  "instruments": 5000,
+  "ticks": 5,
+  "validated": true,
+  "results": [
+    {"views": 256, "cpu_engine": "cpu-simple", "cpu_p50": 595.837, "cpu_p95": 753.715, "cpu-simple": {"p50": 595.837, "p95": 753.715}, "cpu": {"p50": 758.635, "p95": 765.4}, "mismatches": 0},
+    {"views": 512, "cpu_engine": "cpu-simple", "cpu_p50": 1189.19, "cpu_p95": 1283, "cpu-simple": {"p50": 1189.19, "p95": 1283}, "cpu": {"p50": 1423.55, "p95": 1447.07}, "mismatches": 0},
+    {"views": 1024, "cpu_engine": "cpu-simple", "cpu_p50": 2137.87, "cpu_p95": 2164.44, "cpu-simple": {"p50": 2137.87, "p95": 2164.44}, "cpu": {"p50": 2758.23, "p95": 2805.25}, "mismatches": 0}
+  ]
+}

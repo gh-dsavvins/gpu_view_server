@@ -27,6 +27,7 @@ struct Args {
     bool validate = true;
     std::string json;
     std::string pin;
+    bool randomViewport = false;
     CpuConfig cpu;
     GpuConfig gpu;
 };
@@ -45,6 +46,8 @@ void usage() {
         "  --gpus N            max GPUs (all)\n"
         "  --slots N           GPU views per batch (8)\n"
         "  --groups N          GPU workgroups per view for full-table passes (64)\n"
+        "  --viewport MODE     top: views mostly look at the first rows (default);\n"
+        "                      random: every tick each view jumps to a random position in its result set\n"
         "  --no-validate       skip the result comparison between engines\n"
         "  --json FILE         also write results and machine details as JSON\n"
         "  --seed N            simulation seed (42)");
@@ -69,6 +72,7 @@ bool parseArgs(int argc, char** argv, Args& a) {
         else if (k == "--gpus") a.gpu.maxDevices = uint32_t(std::atoi(val()));
         else if (k == "--slots") a.gpu.slots = uint32_t(std::atoi(val()));
         else if (k == "--groups") a.gpu.groupsPerSlot = uint32_t(std::atoi(val()));
+        else if (k == "--viewport") a.randomViewport = std::string(val()) == "random";
         else if (k == "--no-validate") a.validate = false;
         else if (k == "--json") a.json = val();
         else if (k == "--seed") a.sim.seed = uint64_t(std::atoll(val()));
@@ -199,13 +203,20 @@ int main(int argc, char** argv) {
                 row.eng[e].derive.push_back(st.deriveMs);
                 row.eng[e].views.push_back(st.viewsMs);
             }
-            if (t < a.warmup || !a.validate) continue;
-            for (size_t e = 1; e < E; ++e) {
-                std::string first;
-                const int bad = compareResults(res[0], res[e], &first);
-                if (bad && row.firstDiff.empty()) row.firstDiff = engines[e]->name() + " " + first;
-                row.mismatches += bad;
+            if (t >= a.warmup && a.validate) {
+                for (size_t e = 1; e < E; ++e) {
+                    std::string first;
+                    const int bad = compareResults(res[0], res[e], &first);
+                    if (bad && row.firstDiff.empty()) row.firstDiff = engines[e]->name() + " " + first;
+                    row.mismatches += bad;
+                }
             }
+            // Next tick, each view looks at a random window anywhere in its (last known) result set.
+            if (a.randomViewport)
+                for (size_t i = 0; i < params.size(); ++i) {
+                    const uint32_t total = res[0][i].total, lim = params[i].limit;
+                    params[i].offset = total > lim ? uint32_t(rng() % (total - lim + 1)) : 0;
+                }
         }
         std::printf("views %u done\n", nv);
         rows.push_back(std::move(row));
@@ -255,6 +266,7 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < gpuNames.size(); ++i) f << (i ? ", " : "") << '"' << jsonEscape(gpuNames[i]) << '"';
         f << "],\n  \"gpu_slots\": " << a.gpu.slots << ",\n  \"gpu_groups\": " << a.gpu.groupsPerSlot
           << ",\n  \"rows\": " << store.rows << ",\n  \"instruments\": " << store.instruments
+          << ",\n  \"viewport\": \"" << (a.randomViewport ? "random" : "top") << "\""
           << ",\n  \"ticks\": " << a.ticks << ",\n  \"validated\": " << (a.validate && E > 1 ? "true" : "false")
           << ",\n  \"results\": [\n";
         for (size_t i = 0; i < rows.size(); ++i) {
