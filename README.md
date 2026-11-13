@@ -3,6 +3,33 @@
 Proof of concept: a view server that keeps a live order table in GPU memory and serves many
 differently filtered, sorted and pivoted viewports every tick, compared against an all-cores CPU engine.
 
+## Results — H200 vs CPU
+
+5M live orders: full data refresh + all views fully re-sorted, random viewport (ms)
+
+| Views | H200 GPU | CPU (28 vCPU) | Speedup |
+|------:|---------:|--------------:|--------:|
+| 256   | 44.1     | 650           | 14.7×   |
+| 512   | 88.0     | 1,111         | 12.6×   |
+| 1024  | 172.4    | 2,194         | 12.7×   |
+
+At 25M orders and 1024 views, the H200 does a full refresh in **672 ms**.
+
+**What one refresh is:** apply the tick's fills, cancels and new orders plus all
+instrument prices. Recalculate the market-data columns (mid, leaves, notional,
+distance to market, P&L) for every order. Then re-filter, re-sort and re-pivot
+every view from scratch against all 5M orders, and return each view's visible
+rows. Nothing is reused from the previous tick. Each view looks at a random
+window anywhere in its result set, top or middle.
+
+**CPU side:** all of the box's cores. CPU and GPU produce identical results,
+row for row, checked every tick.
+
+**What it means:** at 1024 views the GPU does about 6 full refreshes a second;
+the CPU manages one every 2.2 s.
+
+**Box:** 1× H200 + 2× Xeon Platinum 8580, 28 vCPUs.
+
 - `server/` C++20 server: order/market-data simulator, CPU engine, Vulkan GPU engine, WebSocket + protobuf API
 - `server/shaders/` GLSL compute kernels (derived columns, 8-pass radix select, pivot)
 - `client/` TypeScript browser client (Vite): live views, sort by header click, scrolling, pivots, CPU/GPU switch
